@@ -20,7 +20,7 @@ import (
 	"k8s.io/client-go/util/homedir"
 )
 
-const name = "kj"
+const cmdName = "kj"
 
 const (
 	exitStatusOK = iota
@@ -47,38 +47,38 @@ Usage:
 	%[1]s namespace/name
 
 Options:
-`, name)
+`, cmdName)
 		flag.PrintDefaults()
 	}
 	flag.Parse()
 
 	clientset, err := newK8sClient(*kubeconfig)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "%s: failed to connect kubernetes (%v)\n", name, err)
+		fmt.Fprintf(os.Stderr, "%s: failed to connect kubernetes (%v)\n", cmdName, err)
 		return exitStatusErr
 	}
 
 	namespace, name, ok := getNamespaceAndName(flag.Args())
 	if !ok {
-		fmt.Fprintf(os.Stderr, "%s: argments are invalid\n", name)
+		fmt.Fprintf(os.Stderr, "%s: argments are invalid\n", cmdName)
 		flag.Usage()
 		return exitStatusErr
 	}
 
 	cj, err := clientset.BatchV1beta1().CronJobs(namespace).Get(context.Background(), name, metav1.GetOptions{})
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "%s: %v\n", name, err)
+		fmt.Fprintf(os.Stderr, "%s: %v\n", cmdName, err)
 		return exitStatusErr
 	}
 
 	job, err := newJob(cj)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "%s: %v\n", name, err)
+		fmt.Fprintf(os.Stderr, "%s: %v\n", cmdName, err)
 		return exitStatusErr
 	}
 
 	if err = createJob(job); err != nil {
-		fmt.Fprintf(os.Stderr, "%s: %v\n", name, err)
+		fmt.Fprintf(os.Stderr, "%s: %v\n", cmdName, err)
 		return exitStatusErr
 	}
 

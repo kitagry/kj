@@ -10,14 +10,15 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/goccy/go-yaml"
 	"github.com/mattn/go-tty"
 	batchv1 "k8s.io/api/batch/v1"
 	batchv1beta1 "k8s.io/api/batch/v1beta1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes"
+	_ "k8s.io/client-go/plugin/pkg/client/auth"
 	"k8s.io/client-go/tools/clientcmd"
 	"k8s.io/client-go/util/homedir"
+	"sigs.k8s.io/yaml"
 )
 
 const cmdName = "kj"
@@ -155,8 +156,12 @@ func createJob(job *batchv1.Job) error {
 	}
 	defer os.Remove(f.Name())
 
-	encoder := yaml.NewEncoder(f)
-	err = encoder.Encode(job)
+	data, err := yaml.Marshal(job)
+	if err != nil {
+		return err
+	}
+
+	_, err = f.Write(data)
 	if err != nil {
 		return err
 	}
@@ -184,6 +189,15 @@ func createJob(job *batchv1.Job) error {
 	cmd.Stderr = tty.Output()
 	if err := cmd.Run(); err != nil {
 		return err
+	}
+
+	fmt.Printf("Can you apply it?[y/N]\n")
+	var answer string
+	fmt.Scan(&answer)
+	answer = strings.TrimSpace(answer)
+	if answer != "Y" && answer != "y" {
+		fmt.Println("canceled")
+		return nil
 	}
 
 	cmd = exec.Command("kubectl", "apply", "-f", f.Name())

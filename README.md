@@ -23,7 +23,7 @@ You can use your favorite fuzzy finder(fzf, peco, etc).
 
 ```zsh
 kjf() {
-  kubectl get cronjobs -A | tr -s ' ' | cut -d ' ' -f 1,2 | tail -n +2 | fzf | xargs kj
+  kubectl get cronjobs --all-namespaces | tr -s ' ' | cut -d ' ' -f 1,2 | tail -n +2 | fzf | xargs kj
 }
 ```
 

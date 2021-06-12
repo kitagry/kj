@@ -108,9 +108,6 @@ func getNamespaceAndName(s []string) (namespace, name string, ok bool) {
 	}
 
 	s = strings.Split(s[0], "/")
-	if len(s) == 1 {
-		return "", s[0], true
-	}
 	if len(s) != 2 {
 		return "", "", false
 	}

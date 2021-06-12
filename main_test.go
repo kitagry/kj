@@ -20,11 +20,10 @@ func TestGetNamespaceAndName(t *testing.T) {
 			name:      "name",
 			ok:        true,
 		},
+		// TODO: use default namespace for kubernetes
 		"only name is specified": {
-			inputs:    []string{"name"},
-			namespace: "",
-			name:      "name",
-			ok:        true,
+			inputs: []string{"name"},
+			ok:     false,
 		},
 		"inputs are nil": {
 			inputs: nil,

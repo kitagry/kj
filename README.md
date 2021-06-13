@@ -14,6 +14,22 @@ kj namespace/name
 This command opens the editor with the job yaml from specified cronjob.
 `kj` command apply your changes.
 
+### Install
+
+#### build from source
+
+Requirement: Go 1.16+
+
+```
+go install github.com/kitagry/kj@latest
+```
+
+#### MacOS
+
+```
+brew install kitagry/tap/kj
+```
+
 ### Expansion
 
 This command is simple CLI, and expansiable.

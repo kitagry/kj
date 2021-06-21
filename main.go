@@ -46,6 +46,7 @@ func run() int {
 Usage:
 	%[1]s namespace name
 	%[1]s namespace/name
+	%[1]s name
 
 Options:
 `, cmdName)
@@ -64,6 +65,14 @@ Options:
 		fmt.Fprintf(os.Stderr, "%s: argments are invalid\n", cmdName)
 		flag.Usage()
 		return exitStatusErr
+	}
+
+	if namespace == "" {
+		kc, err := loadKubeconfig(*kubeconfig)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "%s: %v\n", cmdName, err)
+		}
+		namespace = kc.CurrentNamespace()
 	}
 
 	cj, err := clientset.BatchV1beta1().CronJobs(namespace).Get(context.Background(), name, metav1.GetOptions{})
@@ -109,9 +118,14 @@ func getNamespaceAndName(s []string) (namespace, name string, ok bool) {
 	}
 
 	s = strings.Split(s[0], "/")
-	if len(s) != 2 {
+	if len(s) > 2 {
 		return "", "", false
 	}
+
+	if len(s) == 1 {
+		return "", s[0], true
+	}
+
 	return s[0], s[1], true
 }
 

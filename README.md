@@ -9,6 +9,7 @@ Create and Edit Kubernetes job from cronjob template using your `$EDITOR`.
 ```
 kj namespace name
 kj namespace/name
+kj name
 ```
 
 This command opens the editor with the job yaml from specified cronjob.

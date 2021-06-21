@@ -46,6 +46,7 @@ func run() int {
 Usage:
 	%[1]s namespace name
 	%[1]s namespace/name
+	%[1]s name
 
 Options:
 `, cmdName)

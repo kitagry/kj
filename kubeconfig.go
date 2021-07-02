@@ -35,9 +35,12 @@ func loadKubeconfig(path string) (k Kubeconfig, err error) {
 func (k Kubeconfig) CurrentNamespace() string {
 	kc, ok := k.currentContext()
 	if !ok {
-		return ""
+		return "default"
 	}
 
+	if kc.Namespace == "" {
+		return "default"
+	}
 	return kc.Namespace
 }
 
@@ -47,5 +50,7 @@ func (k Kubeconfig) currentContext() (KubeContext, bool) {
 			return kc.Context, true
 		}
 	}
-	return KubeContext{}, false
+	return KubeContext{
+		Namespace: "default",
+	}, false
 }

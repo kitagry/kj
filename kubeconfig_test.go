@@ -49,11 +49,11 @@ func TestKubeconfig_CurrentNamespace(t *testing.T) {
 		},
 		"Context has no namespace": {
 			currentContext: "a",
-			expect:         "",
+			expect:         "default",
 		},
 		"Context doesn't exist": {
 			currentContext: "not exist context",
-			expect:         "",
+			expect:         "default",
 		},
 	}
 

@@ -11,6 +11,7 @@ import (
 	"strings"
 
 	"github.com/mattn/go-tty"
+	"github.com/mattn/go-tty/ttyutil"
 	batchv1 "k8s.io/api/batch/v1"
 	batchv1beta1 "k8s.io/api/batch/v1beta1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -205,9 +206,11 @@ func createJob(job *batchv1.Job) error {
 		return err
 	}
 
-	fmt.Printf("Can you apply it?[y/N]\n")
-	var answer string
-	fmt.Scan(&answer)
+	fmt.Fprint(tty.Output(), "Can you apply it? [y/N]\n")
+	answer, err := ttyutil.ReadLine(tty)
+	if err != nil {
+		return err
+	}
 	answer = strings.TrimSpace(answer)
 	if answer != "Y" && answer != "y" {
 		fmt.Println("canceled")

@@ -164,7 +164,9 @@ func newJobTemplate(ctx context.Context, clientset *kubernetes.Clientset, namesp
 		return batchv1.JobSpec{}, err
 	}
 
-	if major >= 1 && minor >= 21 {
+	// When kubernetes version is 1.21 or higher, use batchv1.CronJob.
+	// Otherwise, use batchv1beta1.CronJob
+	if (major == 1 && minor >= 21) || major > 1 {
 		cj, err := clientset.BatchV1().CronJobs(namespace).Get(ctx, name, metav1.GetOptions{})
 		if err != nil {
 			return batchv1.JobSpec{}, err

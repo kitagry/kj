@@ -8,12 +8,12 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 
 	"github.com/mattn/go-tty"
 	"github.com/mattn/go-tty/ttyutil"
 	batchv1 "k8s.io/api/batch/v1"
-	batchv1beta1 "k8s.io/api/batch/v1beta1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes"
 	_ "k8s.io/client-go/plugin/pkg/client/auth"
@@ -76,13 +76,7 @@ Options:
 		namespace = kc.CurrentNamespace()
 	}
 
-	cj, err := clientset.BatchV1beta1().CronJobs(namespace).Get(context.Background(), name, metav1.GetOptions{})
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "%s: %v\n", cmdName, err)
-		return exitStatusErr
-	}
-
-	job, err := newJob(cj)
+	job, err := newJob(context.Background(), clientset, namespace, name)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "%s: %v\n", cmdName, err)
 		return exitStatusErr
@@ -130,7 +124,12 @@ func getNamespaceAndName(s []string) (namespace, name string, ok bool) {
 	return s[0], s[1], true
 }
 
-func newJob(cj *batchv1beta1.CronJob) (*batchv1.Job, error) {
+func newJob(ctx context.Context, clientset *kubernetes.Clientset, namespace, name string) (*batchv1.Job, error) {
+	jobSpec, err := newJobTemplate(ctx, clientset, namespace, name)
+	if err != nil {
+		return nil, err
+	}
+
 	suffix, err := randStr(6)
 	if err != nil {
 		return nil, err
@@ -141,12 +140,43 @@ func newJob(cj *batchv1beta1.CronJob) (*batchv1.Job, error) {
 			Kind:       "Job",
 		},
 		ObjectMeta: metav1.ObjectMeta{
-			Namespace: cj.Namespace,
-			Name:      fmt.Sprintf("%s-%s", cj.Name, suffix),
+			Namespace: namespace,
+			Name:      fmt.Sprintf("%s-%s", name, suffix),
 		},
-		Spec: cj.Spec.JobTemplate.Spec,
+		Spec: jobSpec,
 	}
 	return job, nil
+}
+
+func newJobTemplate(ctx context.Context, clientset *kubernetes.Clientset, namespace, name string) (batchv1.JobSpec, error) {
+	v, err := clientset.ServerVersion()
+	if err != nil {
+		return batchv1.JobSpec{}, err
+	}
+
+	major, err := strconv.Atoi(v.Major)
+	if err != nil {
+		return batchv1.JobSpec{}, err
+	}
+
+	minor, err := strconv.Atoi(v.Minor)
+	if err != nil {
+		return batchv1.JobSpec{}, err
+	}
+
+	if major >= 1 && minor >= 21 {
+		cj, err := clientset.BatchV1().CronJobs(namespace).Get(ctx, name, metav1.GetOptions{})
+		if err != nil {
+			return batchv1.JobSpec{}, err
+		}
+		return cj.Spec.JobTemplate.Spec, nil
+	}
+
+	cj, err := clientset.BatchV1beta1().CronJobs(namespace).Get(ctx, name, metav1.GetOptions{})
+	if err != nil {
+		return batchv1.JobSpec{}, err
+	}
+	return cj.Spec.JobTemplate.Spec, nil
 }
 
 func randStr(n int) (string, error) {

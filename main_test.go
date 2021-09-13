@@ -1,6 +1,10 @@
 package main
 
-import "testing"
+import (
+	"testing"
+
+	"k8s.io/apimachinery/pkg/version"
+)
 
 func TestGetNamespaceAndName(t *testing.T) {
 	tests := map[string]struct {
@@ -51,6 +55,51 @@ func TestGetNamespaceAndName(t *testing.T) {
 			}
 			if ok != tt.ok {
 				t.Errorf(`ok expected %v, but got %v`, tt.ok, ok)
+			}
+		})
+	}
+}
+
+func TestIsCronJobGA(t *testing.T) {
+	tests := map[string]struct {
+		input  *version.Info
+		expect bool
+	}{
+		"1.20": {
+			input: &version.Info{
+				Major: "1",
+				Minor: "20",
+			},
+			expect: false,
+		},
+		"1.21": {
+			input: &version.Info{
+				Major: "1",
+				Minor: "21",
+			},
+			expect: true,
+		},
+		"1.19+": {
+			input: &version.Info{
+				Major: "1",
+				Minor: "19+",
+			},
+			expect: false,
+		},
+		"1.21+": {
+			input: &version.Info{
+				Major: "1",
+				Minor: "21+",
+			},
+			expect: true,
+		},
+	}
+
+	for n, tt := range tests {
+		t.Run(n, func(t *testing.T) {
+			got := isCronJobGA(tt.input)
+			if got != tt.expect {
+				t.Errorf("isCronJobGA expect %t, got %t", tt.expect, got)
 			}
 		})
 	}

@@ -8,13 +8,13 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"strconv"
 	"strings"
 
 	"github.com/mattn/go-tty"
 	"github.com/mattn/go-tty/ttyutil"
 	batchv1 "k8s.io/api/batch/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/version"
 	"k8s.io/client-go/kubernetes"
 	_ "k8s.io/client-go/plugin/pkg/client/auth"
 	"k8s.io/client-go/tools/clientcmd"
@@ -151,22 +151,12 @@ func newJob(ctx context.Context, clientset *kubernetes.Clientset, namespace, nam
 func newJobTemplate(ctx context.Context, clientset *kubernetes.Clientset, namespace, name string) (batchv1.JobSpec, error) {
 	v, err := clientset.ServerVersion()
 	if err != nil {
-		return batchv1.JobSpec{}, err
-	}
-
-	major, err := strconv.Atoi(v.Major)
-	if err != nil {
-		return batchv1.JobSpec{}, err
-	}
-
-	minor, err := strconv.Atoi(v.Minor)
-	if err != nil {
-		return batchv1.JobSpec{}, err
+		return batchv1.JobSpec{}, fmt.Errorf("failed to get serverVersion: %w", err)
 	}
 
 	// When kubernetes version is 1.21 or higher, use batchv1.CronJob.
 	// Otherwise, use batchv1beta1.CronJob
-	if (major == 1 && minor >= 21) || major > 1 {
+	if isCronJobGA(v) {
 		cj, err := clientset.BatchV1().CronJobs(namespace).Get(ctx, name, metav1.GetOptions{})
 		if err != nil {
 			return batchv1.JobSpec{}, err
@@ -179,6 +169,13 @@ func newJobTemplate(ctx context.Context, clientset *kubernetes.Clientset, namesp
 		return batchv1.JobSpec{}, err
 	}
 	return cj.Spec.JobTemplate.Spec, nil
+}
+
+func isCronJobGA(v *version.Info) bool {
+	if (v.Major == "1" && v.Minor >= "21") || v.Major > "1" {
+		return true
+	}
+	return false
 }
 
 func randStr(n int) (string, error) {

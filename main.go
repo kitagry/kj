@@ -41,6 +41,7 @@ func run() int {
 	} else {
 		kubeconfig = flag.String("kubeconfig", "", "absolute path to the kubeconfig file")
 	}
+	filename := flag.String("f", "", "(optional) filename to save Job resource")
 	flag.Usage = func() {
 		fmt.Printf(`%[1]s - create custom job from cronjob template
 
@@ -82,7 +83,7 @@ Options:
 		return exitStatusErr
 	}
 
-	if err = createJob(job); err != nil {
+	if err = createJobWithFileName(filename, job); err != nil {
 		fmt.Fprintf(os.Stderr, "%s: %v\n", cmdName, err)
 		return exitStatusErr
 	}
@@ -193,13 +194,26 @@ func randStr(n int) (string, error) {
 	return builder.String(), nil
 }
 
-func createJob(job *batchv1.Job) error {
-	f, err := os.CreateTemp("", "kj.*.yaml")
-	if err != nil {
-		return err
+func createJobWithFileName(filename *string, job *batchv1.Job) error {
+	var f *os.File
+	var err error
+	if filename == nil || *filename == "" {
+		f, err = os.CreateTemp("", "kj.*.yaml")
+		if err != nil {
+			return err
+		}
+		defer os.Remove(f.Name())
+	} else {
+		f, err = os.Create(*filename)
+		if err != nil {
+			return err
+		}
 	}
-	defer os.Remove(f.Name())
 
+	return createJob(f, job)
+}
+
+func createJob(f *os.File, job *batchv1.Job) error {
 	data, err := yaml.Marshal(job)
 	if err != nil {
 		return err

@@ -126,7 +126,7 @@ func getNamespaceAndName(s []string) (namespace, name string, ok bool) {
 }
 
 func newJob(ctx context.Context, clientset *kubernetes.Clientset, namespace, name string) (*batchv1.Job, error) {
-	jobSpec, err := newJobTemplate(ctx, clientset, namespace, name)
+	jobSpec, ownerRef, err := newJobTemplate(ctx, clientset, namespace, name)
 	if err != nil {
 		return nil, err
 	}
@@ -141,18 +141,19 @@ func newJob(ctx context.Context, clientset *kubernetes.Clientset, namespace, nam
 			Kind:       "Job",
 		},
 		ObjectMeta: metav1.ObjectMeta{
-			Namespace: namespace,
-			Name:      fmt.Sprintf("%s-%s", name, suffix),
+			Namespace:       namespace,
+			Name:            fmt.Sprintf("%s-%s", name, suffix),
+			OwnerReferences: []metav1.OwnerReference{ownerRef},
 		},
 		Spec: jobSpec,
 	}
 	return job, nil
 }
 
-func newJobTemplate(ctx context.Context, clientset *kubernetes.Clientset, namespace, name string) (batchv1.JobSpec, error) {
+func newJobTemplate(ctx context.Context, clientset *kubernetes.Clientset, namespace, name string) (jobSpec batchv1.JobSpec, ownerRef metav1.OwnerReference, err error) {
 	v, err := clientset.ServerVersion()
 	if err != nil {
-		return batchv1.JobSpec{}, fmt.Errorf("failed to get serverVersion: %w", err)
+		return jobSpec, ownerRef, fmt.Errorf("failed to get serverVersion: %w", err)
 	}
 
 	// When kubernetes version is 1.21 or higher, use batchv1.CronJob.
@@ -160,16 +161,28 @@ func newJobTemplate(ctx context.Context, clientset *kubernetes.Clientset, namesp
 	if isCronJobGA(v) {
 		cj, err := clientset.BatchV1().CronJobs(namespace).Get(ctx, name, metav1.GetOptions{})
 		if err != nil {
-			return batchv1.JobSpec{}, err
+			return jobSpec, ownerRef, err
 		}
-		return cj.Spec.JobTemplate.Spec, nil
+		ownerRef := metav1.OwnerReference{
+			APIVersion: "batch/v1",
+			Kind:       "CronJob",
+			Name:       cj.GetName(),
+			UID:        cj.GetUID(),
+		}
+		return cj.Spec.JobTemplate.Spec, ownerRef, nil
 	}
 
 	cj, err := clientset.BatchV1beta1().CronJobs(namespace).Get(ctx, name, metav1.GetOptions{})
 	if err != nil {
-		return batchv1.JobSpec{}, err
+		return jobSpec, ownerRef, err
 	}
-	return cj.Spec.JobTemplate.Spec, nil
+	ownerRef = metav1.OwnerReference{
+		APIVersion: "batch/v1beta1",
+		Kind:       "CronJob",
+		Name:       cj.GetName(),
+		UID:        cj.GetUID(),
+	}
+	return cj.Spec.JobTemplate.Spec, ownerRef, nil
 }
 
 func isCronJobGA(v *version.Info) bool {

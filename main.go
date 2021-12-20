@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"crypto/rand"
 	"flag"
@@ -8,6 +9,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strings"
 
 	"github.com/mattn/go-tty"
@@ -164,10 +166,11 @@ func newJobTemplate(ctx context.Context, clientset *kubernetes.Clientset, namesp
 			return jobSpec, ownerRef, err
 		}
 		ownerRef := metav1.OwnerReference{
-			APIVersion: "batch/v1",
-			Kind:       "CronJob",
-			Name:       cj.GetName(),
-			UID:        cj.GetUID(),
+			APIVersion:         "batch/v1",
+			Kind:               "CronJob",
+			Name:               cj.GetName(),
+			UID:                cj.GetUID(),
+			BlockOwnerDeletion: toPtr(true),
 		}
 		return cj.Spec.JobTemplate.Spec, ownerRef, nil
 	}
@@ -177,10 +180,11 @@ func newJobTemplate(ctx context.Context, clientset *kubernetes.Clientset, namesp
 		return jobSpec, ownerRef, err
 	}
 	ownerRef = metav1.OwnerReference{
-		APIVersion: "batch/v1beta1",
-		Kind:       "CronJob",
-		Name:       cj.GetName(),
-		UID:        cj.GetUID(),
+		APIVersion:         "batch/v1beta1",
+		Kind:               "CronJob",
+		Name:               cj.GetName(),
+		UID:                cj.GetUID(),
+		BlockOwnerDeletion: toPtr(true),
 	}
 	return cj.Spec.JobTemplate.Spec, ownerRef, nil
 }
@@ -227,7 +231,7 @@ func createJobWithFileName(filename *string, job *batchv1.Job) error {
 }
 
 func createJob(f *os.File, job *batchv1.Job) error {
-	data, err := yaml.Marshal(job)
+	data, err := jobToYaml(job)
 	if err != nil {
 		return err
 	}
@@ -281,4 +285,31 @@ func createJob(f *os.File, job *batchv1.Job) error {
 		return err
 	}
 	return nil
+}
+
+func jobToYaml(job *batchv1.Job) ([]byte, error) {
+	// Marshal with ownerReferences commented out
+	ownerRefs, err := yaml.Marshal(map[string]any{"ownerReferences": job.ObjectMeta.OwnerReferences})
+	if err != nil {
+		return nil, err
+	}
+
+	job.ObjectMeta.OwnerReferences = nil
+	data, err := yaml.Marshal(job)
+	if err != nil {
+		return nil, err
+	}
+
+	commentForOwnerRefs := "  # "
+	commentedOwnerRefs := commentForOwnerRefs + strings.ReplaceAll(string(ownerRefs), "\n", "\n"+commentForOwnerRefs)
+	commentedOwnerRefs = strings.TrimSuffix(commentedOwnerRefs, commentForOwnerRefs)
+	namespaceInd := bytes.Index(data, []byte("namespace: "))
+	namespaceLineInd := bytes.Index(data[namespaceInd:], []byte("\n")) + namespaceInd
+
+	data = slices.Insert(data, namespaceLineInd+1, []byte(commentedOwnerRefs)...)
+	return data, nil
+}
+
+func toPtr[T any](t T) *T {
+	return &t
 }

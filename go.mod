@@ -4,6 +4,7 @@ go 1.22
 
 require (
 	github.com/goccy/go-yaml v1.11.3
+	github.com/google/go-cmp v0.6.0
 	github.com/mattn/go-tty v0.0.5
 	k8s.io/api v0.29.3
 	k8s.io/apimachinery v0.29.3

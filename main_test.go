@@ -3,6 +3,9 @@ package main
 import (
 	"testing"
 
+	"github.com/google/go-cmp/cmp"
+	batchv1 "k8s.io/api/batch/v1"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/version"
 )
 
@@ -100,6 +103,67 @@ func TestIsCronJobGA(t *testing.T) {
 			got := isCronJobGA(tt.input)
 			if got != tt.expect {
 				t.Errorf("isCronJobGA expect %t, got %t", tt.expect, got)
+			}
+		})
+	}
+}
+
+func TestJobToYaml(t *testing.T) {
+	tests := map[string]struct {
+		job    *batchv1.Job
+		expect []byte
+	}{
+		"should ownereReferences to commented out": {
+			job: &batchv1.Job{
+				TypeMeta: metav1.TypeMeta{
+					APIVersion: "batch/v1",
+					Kind:       "Job",
+				},
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      "test",
+					Namespace: "default",
+					OwnerReferences: []metav1.OwnerReference{
+						{
+							APIVersion:         "batch/v1",
+							BlockOwnerDeletion: toPtr(true),
+							Kind:               "CronJob",
+							Name:               "test",
+							UID:                "",
+						},
+					},
+				},
+			},
+			expect: []byte(`apiVersion: batch/v1
+kind: Job
+metadata:
+  creationTimestamp: null
+  name: test
+  namespace: default
+  # ownerReferences:
+  # - apiVersion: batch/v1
+  #   blockOwnerDeletion: true
+  #   kind: CronJob
+  #   name: test
+  #   uid: ""
+spec:
+  template:
+    metadata:
+      creationTimestamp: null
+    spec:
+      containers: null
+status: {}
+`),
+		},
+	}
+
+	for n, tt := range tests {
+		t.Run(n, func(t *testing.T) {
+			got, err := jobToYaml(tt.job)
+			if err != nil {
+				t.Fatalf("jobToYaml got error: %v", err)
+			}
+			if diff := cmp.Diff(tt.expect, got); diff != "" {
+				t.Errorf("jobToYaml result diff (-expect, +got)\n%s", diff)
 			}
 		})
 	}

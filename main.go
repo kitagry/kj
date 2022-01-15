@@ -249,7 +249,7 @@ func createJob(f *os.File, job *batchv1.Job) error {
 		return err
 	}
 
-	fmt.Fprint(tty.Output(), "Can you apply it? [y/N]\n")
+	fmt.Fprint(tty.Output(), "Do you want to create a job with the change you just made? [y/N]\n")
 	answer, err := ttyutil.ReadLine(tty)
 	if err != nil {
 		return err

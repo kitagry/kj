@@ -38,8 +38,17 @@ func main() {
 
 func run() int {
 	var kubeconfig *string
-	if home := homedir.HomeDir(); home != "" {
-		kubeconfig = flag.String("kubeconfig", filepath.Join(home, ".kube", "config"), "(optional) absolute path to the kubeconfig file")
+	// default kubeconfig path is loaded in the following priority:
+	// 1. load environment variable KUBECONFIG exists
+	// 2. load $HOME/.kube/config
+	var defaultKubeConfig string
+	if env := os.Getenv("KUBECONFIG"); env != "" {
+		defaultKubeConfig = env
+	} else if home := homedir.HomeDir(); home != "" {
+		defaultKubeConfig = filepath.Join(home, ".kube", "config")
+	}
+	if defaultKubeConfig != "" {
+		kubeconfig = flag.String("kubeconfig", defaultKubeConfig, "(optional) absolute path to the kubeconfig file")
 	} else {
 		kubeconfig = flag.String("kubeconfig", "", "absolute path to the kubeconfig file")
 	}

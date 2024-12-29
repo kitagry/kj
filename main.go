@@ -4,8 +4,10 @@ import (
 	"bytes"
 	"context"
 	"crypto/rand"
+	"errors"
 	"flag"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -275,16 +277,27 @@ func createJob(f *os.File, job *batchv1.Job) error {
 		return err
 	}
 
-	fmt.Fprint(tty.Output(), "Do you want to create a job with the change you just made? [y/N]\n")
-	answer, err := ttyutil.ReadLine(tty)
-	if err != nil {
-		return err
+	for {
+		fmt.Fprint(tty.Output(), "Do you want to create a job with the change you just made? [y/N]\n")
+		answer, err := ttyutil.ReadLine(tty)
+		if err != nil {
+			if errors.Is(err, io.EOF) {
+				continue
+			}
+			return err
+		}
+
+		switch strings.ToLower(strings.TrimSpace(answer)) {
+		case "y":
+			goto yes
+		case "n":
+			fmt.Fprintln(tty.Output(), "canceled")
+			return nil
+		default:
+			continue
+		}
 	}
-	answer = strings.TrimSpace(answer)
-	if answer != "Y" && answer != "y" {
-		fmt.Println("canceled")
-		return nil
-	}
+yes:
 
 	cmd = exec.Command("kubectl", "apply", "-f", f.Name())
 	cmd.Stdin = tty.Input()

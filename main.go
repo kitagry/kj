@@ -4,13 +4,17 @@ import (
 	"bytes"
 	"context"
 	"crypto/rand"
+	"errors"
 	"flag"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
+	"os/signal"
 	"path/filepath"
 	"slices"
 	"strings"
+	"syscall"
 
 	"github.com/mattn/go-tty"
 	"github.com/mattn/go-tty/ttyutil"
@@ -239,6 +243,50 @@ func createJobWithFileName(filename *string, job *batchv1.Job) error {
 	return createJob(f, job)
 }
 
+func confirmByUser(tty *tty.TTY) (bool, error) {
+	fmt.Fprint(tty.Output(), "Do you want to create a job with the change you just made? [y/n]\n")
+
+	sigs := make(chan os.Signal, 1)
+	signal.Notify(sigs, syscall.SIGINT)
+	defer signal.Stop(sigs)
+
+	answerCh := make(chan string)
+	errCh := make(chan error)
+
+	go func() {
+		for {
+			answer, err := ttyutil.ReadLine(tty)
+			if err != nil {
+				if errors.Is(err, io.EOF) {
+					continue
+				}
+				errCh <- err
+				return
+			}
+			answerCh <- answer
+		}
+	}()
+
+	for {
+		select {
+		case <-sigs:
+			return false, nil
+		case answer := <-answerCh:
+			answer = strings.ToLower(strings.TrimSpace(answer))
+			switch answer {
+			case "y":
+				return true, nil
+			case "n", "":
+				return false, nil
+			default:
+				fmt.Fprint(tty.Output(), "Please answer y or n: \n")
+			}
+		case err := <-errCh:
+			return false, err
+		}
+	}
+}
+
 func createJob(f *os.File, job *batchv1.Job) error {
 	data, err := jobToYaml(job)
 	if err != nil {
@@ -275,13 +323,11 @@ func createJob(f *os.File, job *batchv1.Job) error {
 		return err
 	}
 
-	fmt.Fprint(tty.Output(), "Do you want to create a job with the change you just made? [y/N]\n")
-	answer, err := ttyutil.ReadLine(tty)
+	confirmed, err := confirmByUser(tty)
 	if err != nil {
 		return err
 	}
-	answer = strings.TrimSpace(answer)
-	if answer != "Y" && answer != "y" {
+	if !confirmed {
 		fmt.Println("canceled")
 		return nil
 	}

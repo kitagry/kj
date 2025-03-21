@@ -288,6 +288,27 @@ func confirmByUser(tty *tty.TTY) (bool, error) {
 }
 
 func createJob(f *os.File, job *batchv1.Job) error {
+	if err := writeJobToFile(f, job); err != nil {
+		return err
+	}
+
+	if err := editFile(f.Name()); err != nil {
+		return err
+	}
+
+	confirmed, err := confirmJobCreation()
+	if err != nil {
+		return err
+	}
+	if !confirmed {
+		fmt.Println("canceled")
+		return nil
+	}
+
+	return applyJob(f.Name())
+}
+
+func writeJobToFile(f *os.File, job *batchv1.Job) error {
 	data, err := jobToYaml(job)
 	if err != nil {
 		return err
@@ -298,10 +319,20 @@ func createJob(f *os.File, job *batchv1.Job) error {
 		return err
 	}
 
-	if err = f.Close(); err != nil {
-		return err
-	}
+	return f.Close()
+}
 
+func confirmJobCreation() (bool, error) {
+	tty, err := tty.Open()
+	if err != nil {
+		return false, err
+	}
+	defer tty.Close()
+
+	return confirmByUser(tty)
+}
+
+func editFile(filename string) error {
 	tty, err := tty.Open()
 	if err != nil {
 		return err
@@ -313,33 +344,27 @@ func createJob(f *os.File, job *batchv1.Job) error {
 		editor = "vi"
 	}
 	editorWithArgs := strings.Fields(editor)
-	editorWithArgs = append(editorWithArgs, f.Name())
+	editorWithArgs = append(editorWithArgs, filename)
 
 	cmd := exec.Command(editorWithArgs[0], editorWithArgs[1:]...)
 	cmd.Stdin = tty.Input()
 	cmd.Stdout = tty.Output()
 	cmd.Stderr = tty.Output()
-	if err := cmd.Run(); err != nil {
-		return err
-	}
+	return cmd.Run()
+}
 
-	confirmed, err := confirmByUser(tty)
+func applyJob(filename string) error {
+	tty, err := tty.Open()
 	if err != nil {
 		return err
 	}
-	if !confirmed {
-		fmt.Println("canceled")
-		return nil
-	}
+	defer tty.Close()
 
-	cmd = exec.Command("kubectl", "apply", "-f", f.Name())
+	cmd := exec.Command("kubectl", "apply", "-f", filename)
 	cmd.Stdin = tty.Input()
 	cmd.Stdout = tty.Output()
 	cmd.Stderr = tty.Output()
-	if err := cmd.Run(); err != nil {
-		return err
-	}
-	return nil
+	return cmd.Run()
 }
 
 func jobToYaml(job *batchv1.Job) ([]byte, error) {

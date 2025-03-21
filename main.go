@@ -225,22 +225,36 @@ func randStr(n int) (string, error) {
 }
 
 func createJobWithFileName(filename *string, job *batchv1.Job) error {
-	var f *os.File
-	var err error
+	var jobFilename string
 	if filename == nil || *filename == "" {
-		f, err = os.CreateTemp("", "kj.*.yaml")
+		tempFile, err := os.CreateTemp("", "kj.*.yaml")
 		if err != nil {
 			return err
 		}
-		defer os.Remove(f.Name())
+		jobFilename = tempFile.Name()
+		defer os.Remove(jobFilename)
 	} else {
-		f, err = os.Create(*filename)
-		if err != nil {
-			return err
-		}
+		jobFilename = *filename
 	}
 
-	return createJob(f, job)
+	editor := &InteractiveJobEditor{
+		Filename: jobFilename,
+	}
+
+	if err := editor.EditJob(job); err != nil {
+		return err
+	}
+
+	confirmed, err := confirmJobCreation()
+	if err != nil {
+		return err
+	}
+	if !confirmed {
+		fmt.Println("canceled")
+		return nil
+	}
+
+	return applyJob(jobFilename)
 }
 
 func confirmByUser(tty *tty.TTY) (bool, error) {
@@ -287,25 +301,25 @@ func confirmByUser(tty *tty.TTY) (bool, error) {
 	}
 }
 
-func createJob(f *os.File, job *batchv1.Job) error {
+type JobEditor interface {
+	EditJob(job *batchv1.Job) error
+}
+type InteractiveJobEditor struct {
+	Filename string
+}
+
+func (e *InteractiveJobEditor) EditJob(job *batchv1.Job) error {
+	f, err := os.Create(e.Filename)
+	if err != nil {
+		return err
+	}
+	defer f.Close()
+
 	if err := writeJobToFile(f, job); err != nil {
 		return err
 	}
 
-	if err := editFile(f.Name()); err != nil {
-		return err
-	}
-
-	confirmed, err := confirmJobCreation()
-	if err != nil {
-		return err
-	}
-	if !confirmed {
-		fmt.Println("canceled")
-		return nil
-	}
-
-	return applyJob(f.Name())
+	return editFile(e.Filename)
 }
 
 func writeJobToFile(f *os.File, job *batchv1.Job) error {

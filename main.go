@@ -321,7 +321,24 @@ func (e *interactiveJobEditor) EditJob(job *batchv1.Job) error {
 		return err
 	}
 
-	return editFile(e.filename)
+	tty, err := tty.Open()
+	if err != nil {
+		return err
+	}
+	defer tty.Close()
+
+	editor := os.Getenv("EDITOR")
+	if editor == "" {
+		editor = "vi"
+	}
+	editorWithArgs := strings.Fields(editor)
+	editorWithArgs = append(editorWithArgs, e.filename)
+
+	cmd := exec.Command(editorWithArgs[0], editorWithArgs[1:]...)
+	cmd.Stdin = tty.Input()
+	cmd.Stdout = tty.Output()
+	cmd.Stderr = tty.Output()
+	return cmd.Run()
 }
 
 func writeJobToFile(f *os.File, job *batchv1.Job) error {
@@ -346,27 +363,6 @@ func confirmJobCreation() (bool, error) {
 	defer tty.Close()
 
 	return confirmByUser(tty)
-}
-
-func editFile(filename string) error {
-	tty, err := tty.Open()
-	if err != nil {
-		return err
-	}
-	defer tty.Close()
-
-	editor := os.Getenv("EDITOR")
-	if editor == "" {
-		editor = "vi"
-	}
-	editorWithArgs := strings.Fields(editor)
-	editorWithArgs = append(editorWithArgs, filename)
-
-	cmd := exec.Command(editorWithArgs[0], editorWithArgs[1:]...)
-	cmd.Stdin = tty.Input()
-	cmd.Stdout = tty.Output()
-	cmd.Stderr = tty.Output()
-	return cmd.Run()
 }
 
 func applyJob(filename string) error {

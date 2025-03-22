@@ -237,8 +237,8 @@ func createJobWithFileName(filename *string, job *batchv1.Job) error {
 		jobFilename = *filename
 	}
 
-	editor := &InteractiveJobEditor{
-		Filename: jobFilename,
+	editor := &interactiveJobEditor{
+		filename: jobFilename,
 	}
 
 	if err := editor.EditJob(job); err != nil {
@@ -301,15 +301,17 @@ func confirmByUser(tty *tty.TTY) (bool, error) {
 	}
 }
 
-type JobEditor interface {
-	EditJob(job *batchv1.Job) error
-}
-type InteractiveJobEditor struct {
-	Filename string
+// TODO: feature add patchJobEditor
+//
+//	type jobEditor interface {
+//		EditJob(job *batchv1.Job) error
+//	}
+type interactiveJobEditor struct {
+	filename string
 }
 
-func (e *InteractiveJobEditor) EditJob(job *batchv1.Job) error {
-	f, err := os.Create(e.Filename)
+func (e *interactiveJobEditor) EditJob(job *batchv1.Job) error {
+	f, err := os.Create(e.filename)
 	if err != nil {
 		return err
 	}
@@ -319,7 +321,7 @@ func (e *InteractiveJobEditor) EditJob(job *batchv1.Job) error {
 		return err
 	}
 
-	return editFile(e.Filename)
+	return editFile(e.filename)
 }
 
 func writeJobToFile(f *os.File, job *batchv1.Job) error {

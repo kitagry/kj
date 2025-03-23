@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"crypto/rand"
+	"encoding/json"
 	"errors"
 	"flag"
 	"fmt"
@@ -13,6 +14,7 @@ import (
 	"os/signal"
 	"path/filepath"
 	"slices"
+	"strconv"
 	"strings"
 	"syscall"
 
@@ -41,7 +43,11 @@ func main() {
 }
 
 func run() int {
-	var kubeconfig *string
+	var (
+		kubeconfig *string
+		filename   *string
+		patchFile  *string
+	)
 	// default kubeconfig path is loaded in the following priority:
 	// 1. load environment variable KUBECONFIG exists
 	// 2. load $HOME/.kube/config
@@ -56,7 +62,8 @@ func run() int {
 	} else {
 		kubeconfig = flag.String("kubeconfig", "", "absolute path to the kubeconfig file")
 	}
-	filename := flag.String("f", "", "(optional) filename to save Job resource")
+	filename = flag.String("f", "", "(optional) filename to save Job resource")
+	patchFile = flag.String("patch-file", "", "(optional) JSON file with patch information")
 	flag.Usage = func() {
 		fmt.Printf(`%[1]s - create custom job from cronjob template
 
@@ -64,6 +71,19 @@ Usage:
 	%[1]s namespace name
 	%[1]s namespace/name
 	%[1]s name
+
+Examples:
+    # Edit a job interactively in your editor
+    %[1]s namespace name
+    
+    # Apply patch from JSON file without opening an editor
+    %[1]s --patch-file=/path/to/patch.json namespace name 
+    
+    # Patch file format (JSON):
+    # {
+    #   "path": "spec.template.spec.containers[0].command",
+    #   "value": ["python", "main.py", "--option", "hoge"]
+    # }
 
 Options:
 `, cmdName)
@@ -98,7 +118,45 @@ Options:
 		return exitStatusErr
 	}
 
-	if err = createJobWithFileName(filename, job); err != nil {
+	var jobFilename string
+	if filename == nil || *filename == "" {
+		f, err := os.CreateTemp("", "kj.*.yaml")
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "%s: failed to create temporary file: %v\n", cmdName, err)
+			return exitStatusErr
+		}
+		jobFilename = f.Name()
+		defer os.Remove(jobFilename)
+	} else {
+		jobFilename = *filename
+	}
+
+	var editor jobEditor
+	if patchFile != nil && *patchFile != "" {
+		editor = &patchJobEditor{
+			filename:  jobFilename,
+			patchFile: *patchFile,
+		}
+	} else {
+		editor = &interactiveJobEditor{
+			filename: jobFilename,
+		}
+	}
+
+	if err := editor.EditJob(job); err != nil {
+		fmt.Fprintf(os.Stderr, "%s: %v\n", cmdName, err)
+	}
+
+	confirmed, err := confirmJobCreation()
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "%s: %v\n", cmdName, err)
+	}
+	if !confirmed {
+		fmt.Println("canceled")
+		return exitStatusOK
+	}
+
+	if err := applyJob(jobFilename); err != nil {
 		fmt.Fprintf(os.Stderr, "%s: %v\n", cmdName, err)
 		return exitStatusErr
 	}
@@ -224,39 +282,6 @@ func randStr(n int) (string, error) {
 	return builder.String(), nil
 }
 
-func createJobWithFileName(filename *string, job *batchv1.Job) error {
-	var jobFilename string
-	if filename == nil || *filename == "" {
-		tempFile, err := os.CreateTemp("", "kj.*.yaml")
-		if err != nil {
-			return err
-		}
-		jobFilename = tempFile.Name()
-		defer os.Remove(jobFilename)
-	} else {
-		jobFilename = *filename
-	}
-
-	editor := &interactiveJobEditor{
-		filename: jobFilename,
-	}
-
-	if err := editor.EditJob(job); err != nil {
-		return err
-	}
-
-	confirmed, err := confirmJobCreation()
-	if err != nil {
-		return err
-	}
-	if !confirmed {
-		fmt.Println("canceled")
-		return nil
-	}
-
-	return applyJob(jobFilename)
-}
-
 func confirmByUser(tty *tty.TTY) (bool, error) {
 	fmt.Fprint(tty.Output(), "Do you want to create a job with the change you just made? [y/n]\n")
 
@@ -301,11 +326,9 @@ func confirmByUser(tty *tty.TTY) (bool, error) {
 	}
 }
 
-// TODO: feature add patchJobEditor
-//
-//	type jobEditor interface {
-//		EditJob(job *batchv1.Job) error
-//	}
+type jobEditor interface {
+	EditJob(job *batchv1.Job) error
+}
 type interactiveJobEditor struct {
 	filename string
 }
@@ -353,6 +376,137 @@ func writeJobToFile(f *os.File, job *batchv1.Job) error {
 	}
 
 	return f.Close()
+}
+
+type patchJobEditor struct {
+	filename  string
+	patchFile string
+}
+type patchFile struct {
+	Path  string      `json:"path"`
+	Value interface{} `json:"value"`
+}
+
+func (e *patchJobEditor) EditJob(job *batchv1.Job) error {
+
+	patch, err := loadPatchFromFile(e.patchFile)
+	if err != nil {
+		return fmt.Errorf("failed to load patch file: %w", err)
+	}
+
+	data, err := jobToYaml(job)
+	if err != nil {
+		return err
+	}
+
+	patchedData, err := applyPatchToYaml(data, patch)
+	if err != nil {
+		return err
+	}
+
+	f, err := os.Create(e.filename)
+	if err != nil {
+		return err
+	}
+	defer f.Close()
+
+	_, err = f.Write(patchedData)
+	return err
+}
+
+func loadPatchFromFile(filename string) (patchFile, error) {
+	var patch patchFile
+
+	data, err := os.ReadFile(filename)
+	if err != nil {
+		return patch, err
+	}
+
+	err = json.Unmarshal(data, &patch)
+	if err != nil {
+		return patch, err
+	}
+
+	return patch, nil
+}
+
+func applyPatchToYaml(yamlData []byte, patch patchFile) ([]byte, error) {
+	var jobMap map[string]interface{}
+	if err := yaml.Unmarshal(yamlData, &jobMap); err != nil {
+		return nil, err
+	}
+
+	if err := applyPatch(jobMap, patch.Path, patch.Value); err != nil {
+		return nil, err
+	}
+
+	return yaml.Marshal(jobMap)
+}
+
+func applyPatch(jobMap map[string]interface{}, path string, value interface{}) error {
+	// exp. "spec.template.spec.containers[0].image" -> ["spec", "template", "spec", "containers[0]", "image"])
+	segments := strings.Split(path, ".")
+
+	current := jobMap
+	for i, segment := range segments {
+		// The last segment sets the value
+		if i == len(segments)-1 {
+			current[segment] = value
+			break
+		}
+
+		// Handle array index (e.g., "containers[0]")
+		if strings.Contains(segment, "[") && strings.Contains(segment, "]") {
+			indexStart := strings.Index(segment, "[")
+			indexEnd := strings.Index(segment, "]")
+
+			arrayName := segment[:indexStart]
+			indexStr := segment[indexStart+1 : indexEnd]
+			index, err := strconv.Atoi(indexStr)
+			if err != nil {
+				return fmt.Errorf("invalid array index in path: %s", segment)
+			}
+
+			array, ok := current[arrayName].([]interface{})
+			if !ok {
+				return fmt.Errorf("path segment is not an array: %s", arrayName)
+			}
+
+			if index < 0 || index >= len(array) {
+				return fmt.Errorf("array index out of bounds: %d", index)
+			}
+
+			if i == len(segments)-2 {
+				// If the next is the last segment, target the array element directly as a parent
+				nextMap, ok := array[index].(map[string]interface{})
+				if !ok {
+					return fmt.Errorf("path segment is not an object: %s[%d]", arrayName, index)
+				}
+				current = nextMap
+			} else {
+				// Otherwise, continue processing recursively
+				nestedMap, ok := array[index].(map[string]interface{})
+				if !ok {
+					return fmt.Errorf("path segment is not an object: %s[%d]", arrayName, index)
+				}
+				current = nestedMap
+			}
+		} else {
+			nested, ok := current[segment]
+			if !ok {
+				nested = make(map[string]interface{})
+				current[segment] = nested
+			}
+
+			nestedMap, ok := nested.(map[string]interface{})
+			if !ok {
+				return fmt.Errorf("path segment is not an object: %s", segment)
+			}
+			current = nestedMap
+		}
+	}
+
+	return nil
 }
 
 func confirmJobCreation() (bool, error) {

@@ -102,6 +102,14 @@ spec:
 			expectedResult: "map[limits:map[cpu:100m memory:128Mi]]",
 			expectError:    false,
 		},
+		"nonexistent path segment": {
+			patch: patchFile{
+				Path:  "spec.template.spec.containers[0].nonexistent.field",
+				Value: "new-value",
+			},
+			expectedResult: "new-value",
+			expectError:    false,
+		},
 		"invalid index": {
 			patch: patchFile{
 				Path:  "spec.template.spec.containers[5].image",

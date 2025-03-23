@@ -225,22 +225,36 @@ func randStr(n int) (string, error) {
 }
 
 func createJobWithFileName(filename *string, job *batchv1.Job) error {
-	var f *os.File
-	var err error
+	var jobFilename string
 	if filename == nil || *filename == "" {
-		f, err = os.CreateTemp("", "kj.*.yaml")
+		tempFile, err := os.CreateTemp("", "kj.*.yaml")
 		if err != nil {
 			return err
 		}
-		defer os.Remove(f.Name())
+		jobFilename = tempFile.Name()
+		defer os.Remove(jobFilename)
 	} else {
-		f, err = os.Create(*filename)
-		if err != nil {
-			return err
-		}
+		jobFilename = *filename
 	}
 
-	return createJob(f, job)
+	editor := &interactiveJobEditor{
+		filename: jobFilename,
+	}
+
+	if err := editor.EditJob(job); err != nil {
+		return err
+	}
+
+	confirmed, err := confirmJobCreation()
+	if err != nil {
+		return err
+	}
+	if !confirmed {
+		fmt.Println("canceled")
+		return nil
+	}
+
+	return applyJob(jobFilename)
 }
 
 func confirmByUser(tty *tty.TTY) (bool, error) {
@@ -287,18 +301,23 @@ func confirmByUser(tty *tty.TTY) (bool, error) {
 	}
 }
 
-func createJob(f *os.File, job *batchv1.Job) error {
-	data, err := jobToYaml(job)
+// TODO: feature add patchJobEditor
+//
+//	type jobEditor interface {
+//		EditJob(job *batchv1.Job) error
+//	}
+type interactiveJobEditor struct {
+	filename string
+}
+
+func (e *interactiveJobEditor) EditJob(job *batchv1.Job) error {
+	f, err := os.Create(e.filename)
 	if err != nil {
 		return err
 	}
+	defer f.Close()
 
-	_, err = f.Write(data)
-	if err != nil {
-		return err
-	}
-
-	if err = f.Close(); err != nil {
+	if err := writeJobToFile(f, job); err != nil {
 		return err
 	}
 
@@ -313,33 +332,51 @@ func createJob(f *os.File, job *batchv1.Job) error {
 		editor = "vi"
 	}
 	editorWithArgs := strings.Fields(editor)
-	editorWithArgs = append(editorWithArgs, f.Name())
+	editorWithArgs = append(editorWithArgs, e.filename)
 
 	cmd := exec.Command(editorWithArgs[0], editorWithArgs[1:]...)
 	cmd.Stdin = tty.Input()
 	cmd.Stdout = tty.Output()
 	cmd.Stderr = tty.Output()
-	if err := cmd.Run(); err != nil {
-		return err
-	}
+	return cmd.Run()
+}
 
-	confirmed, err := confirmByUser(tty)
+func writeJobToFile(f *os.File, job *batchv1.Job) error {
+	data, err := jobToYaml(job)
 	if err != nil {
 		return err
 	}
-	if !confirmed {
-		fmt.Println("canceled")
-		return nil
+
+	_, err = f.Write(data)
+	if err != nil {
+		return err
 	}
 
-	cmd = exec.Command("kubectl", "apply", "-f", f.Name())
+	return f.Close()
+}
+
+func confirmJobCreation() (bool, error) {
+	tty, err := tty.Open()
+	if err != nil {
+		return false, err
+	}
+	defer tty.Close()
+
+	return confirmByUser(tty)
+}
+
+func applyJob(filename string) error {
+	tty, err := tty.Open()
+	if err != nil {
+		return err
+	}
+	defer tty.Close()
+
+	cmd := exec.Command("kubectl", "apply", "-f", filename)
 	cmd.Stdin = tty.Input()
 	cmd.Stdout = tty.Output()
 	cmd.Stderr = tty.Output()
-	if err := cmd.Run(); err != nil {
-		return err
-	}
-	return nil
+	return cmd.Run()
 }
 
 func jobToYaml(job *batchv1.Job) ([]byte, error) {

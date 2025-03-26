@@ -80,7 +80,7 @@ Examples:
     %[1]s --patch-file=/path/to/patch.json namespace name 
     
 	# Patch file format :
-    # Refer to https://kubernetes.io/docs/reference/kubectl/generated/kubectl_patch/
+	# Refer to https://kubernetes.io/docs/reference/kubectl/generated/kubectl_patch/
 
 
 Options:

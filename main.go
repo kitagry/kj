@@ -130,11 +130,13 @@ Options:
 	}
 
 	var editor jobEditor
+	skipConfirm := false
 	if patchFile != nil && *patchFile != "" {
 		editor = &patchJobEditor{
 			filename:  jobFilename,
 			patchFile: *patchFile,
 		}
+		skipConfirm = true
 	} else {
 		editor = &interactiveJobEditor{
 			filename: jobFilename,
@@ -146,13 +148,15 @@ Options:
 		return exitStatusErr
 	}
 
-	confirmed, err := confirmByUser()
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "%s: %v\n", cmdName, err)
-	}
-	if !confirmed {
-		fmt.Println("canceled")
-		return exitStatusOK
+	if !skipConfirm {
+		confirmed, err := confirmByUser()
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "%s: %v\n", cmdName, err)
+		}
+		if !confirmed {
+			fmt.Println("canceled")
+			return exitStatusOK
+		}
 	}
 
 	if err := applyJob(jobFilename); err != nil {

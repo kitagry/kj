@@ -146,7 +146,7 @@ Options:
 		return exitStatusErr
 	}
 
-	confirmed, err := confirmJobCreation()
+	confirmed, err := confirmByUser()
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "%s: %v\n", cmdName, err)
 	}
@@ -281,7 +281,12 @@ func randStr(n int) (string, error) {
 	return builder.String(), nil
 }
 
-func confirmByUser(tty *tty.TTY) (bool, error) {
+func confirmByUser() (bool, error) {
+	tty, err := tty.Open()
+	if err != nil {
+		return false, err
+	}
+	defer tty.Close()
 	fmt.Fprint(tty.Output(), "Do you want to create a job with the change you just made? [y/n]\n")
 
 	sigs := make(chan os.Signal, 1)
@@ -423,27 +428,11 @@ func (e *patchJobEditor) EditJob(job *batchv1.Job) error {
 	return err
 }
 
-func confirmJobCreation() (bool, error) {
-	tty, err := tty.Open()
-	if err != nil {
-		return false, err
-	}
-	defer tty.Close()
-
-	return confirmByUser(tty)
-}
-
 func applyJob(filename string) error {
-	tty, err := tty.Open()
-	if err != nil {
-		return err
-	}
-	defer tty.Close()
-
 	cmd := exec.Command("kubectl", "apply", "-f", filename)
-	cmd.Stdin = tty.Input()
-	cmd.Stdout = tty.Output()
-	cmd.Stderr = tty.Output()
+	cmd.Stdin = nil
+	cmd.Stdout = os.Stdout
+	cmd.Stderr = os.Stderr
 	return cmd.Run()
 }
 

@@ -130,6 +130,7 @@ Options:
 	}
 
 	var editor jobEditor
+	// If patchFile is specified, skip interactive editing and apply the patch
 	skipConfirm := false
 	if patchFile != nil && *patchFile != "" {
 		editor = &patchJobEditor{

@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"context"
 	"crypto/rand"
-	"encoding/json"
 	"errors"
 	"flag"
 	"fmt"
@@ -14,7 +13,6 @@ import (
 	"os/signal"
 	"path/filepath"
 	"slices"
-	"strconv"
 	"strings"
 	"syscall"
 
@@ -22,6 +20,8 @@ import (
 	"github.com/mattn/go-tty/ttyutil"
 	batchv1 "k8s.io/api/batch/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/util/strategicpatch"
+	apiyaml "k8s.io/apimachinery/pkg/util/yaml"
 	"k8s.io/apimachinery/pkg/version"
 	"k8s.io/client-go/kubernetes"
 	_ "k8s.io/client-go/plugin/pkg/client/auth"
@@ -76,14 +76,12 @@ Examples:
     # Edit a job interactively in your editor
     %[1]s namespace name
     
-    # Apply patch from JSON file without opening an editor
+    # Apply patch from JSON or YAML file without opening an editor
     %[1]s --patch-file=/path/to/patch.json namespace name 
     
-    # Patch file format (JSON):
-    # {
-    #   "path": "spec.template.spec.containers[0].command",
-    #   "value": ["python", "main.py", "--option", "hoge"]
-    # }
+	# Patch file format :
+    # Refer to https://kubernetes.io/docs/reference/kubectl/generated/kubectl_patch/
+
 
 Options:
 `, cmdName)
@@ -145,6 +143,7 @@ Options:
 
 	if err := editor.EditJob(job); err != nil {
 		fmt.Fprintf(os.Stderr, "%s: %v\n", cmdName, err)
+		return exitStatusErr
 	}
 
 	confirmed, err := confirmJobCreation()
@@ -382,26 +381,36 @@ type patchJobEditor struct {
 	filename  string
 	patchFile string
 }
-type patchFile struct {
-	Path  string      `json:"path"`
-	Value interface{} `json:"value"`
-}
 
 func (e *patchJobEditor) EditJob(job *batchv1.Job) error {
-
-	patch, err := loadPatchFromFile(e.patchFile)
+	patchBytes, err := os.ReadFile(e.patchFile)
 	if err != nil {
-		return fmt.Errorf("failed to load patch file: %w", err)
+		return fmt.Errorf("failed to read patch file: %w", err)
 	}
 
-	data, err := jobToYaml(job)
+	origData, err := jobToYaml(job)
 	if err != nil {
 		return err
 	}
 
-	patchedData, err := applyPatchToYaml(data, patch)
+	origJSON, err := apiyaml.ToJSON(origData)
 	if err != nil {
-		return err
+		return fmt.Errorf("failed to convert Job to JSON: %w", err)
+	}
+
+	patchJSON, err := apiyaml.ToJSON(patchBytes)
+	if err != nil {
+		return fmt.Errorf("failed to convert patch to JSON: %w\nPatch content: %s", err, string(patchBytes))
+	}
+
+	patchedJSON, err := strategicpatch.StrategicMergePatch(origJSON, patchJSON, job)
+	if err != nil {
+		return fmt.Errorf("failed to apply patch: %w", err)
+	}
+
+	patchedYAML, err := yaml.JSONToYAML(patchedJSON)
+	if err != nil {
+		return fmt.Errorf("failed to convert patched JSON to YAML: %w", err)
 	}
 
 	f, err := os.Create(e.filename)
@@ -410,103 +419,8 @@ func (e *patchJobEditor) EditJob(job *batchv1.Job) error {
 	}
 	defer f.Close()
 
-	_, err = f.Write(patchedData)
+	_, err = f.Write(patchedYAML)
 	return err
-}
-
-func loadPatchFromFile(filename string) (patchFile, error) {
-	var patch patchFile
-
-	data, err := os.ReadFile(filename)
-	if err != nil {
-		return patch, err
-	}
-
-	err = json.Unmarshal(data, &patch)
-	if err != nil {
-		return patch, err
-	}
-
-	return patch, nil
-}
-
-func applyPatchToYaml(yamlData []byte, patch patchFile) ([]byte, error) {
-	var jobMap map[string]interface{}
-	if err := yaml.Unmarshal(yamlData, &jobMap); err != nil {
-		return nil, err
-	}
-
-	if err := applyPatch(jobMap, patch.Path, patch.Value); err != nil {
-		return nil, err
-	}
-
-	return yaml.Marshal(jobMap)
-}
-
-func applyPatch(jobMap map[string]interface{}, path string, value interface{}) error {
-	// exp. "spec.template.spec.containers[0].image" -> ["spec", "template", "spec", "containers[0]", "image"])
-	segments := strings.Split(path, ".")
-
-	current := jobMap
-	for i, segment := range segments {
-		// The last segment sets the value
-		if i == len(segments)-1 {
-			current[segment] = value
-			break
-		}
-
-		// Handle array index (e.g., "containers[0]")
-		if strings.Contains(segment, "[") && strings.Contains(segment, "]") {
-			indexStart := strings.Index(segment, "[")
-			indexEnd := strings.Index(segment, "]")
-
-			arrayName := segment[:indexStart]
-			indexStr := segment[indexStart+1 : indexEnd]
-			index, err := strconv.Atoi(indexStr)
-			if err != nil {
-				return fmt.Errorf("invalid array index in path: %s", segment)
-			}
-
-			array, ok := current[arrayName].([]interface{})
-			if !ok {
-				return fmt.Errorf("path segment is not an array: %s", arrayName)
-			}
-
-			if index < 0 || index >= len(array) {
-				return fmt.Errorf("array index out of bounds: %d", index)
-			}
-
-			if i == len(segments)-2 {
-				// If the next is the last segment, target the array element directly as a parent
-				nextMap, ok := array[index].(map[string]interface{})
-				if !ok {
-					return fmt.Errorf("path segment is not an object: %s[%d]", arrayName, index)
-				}
-				current = nextMap
-			} else {
-				// Otherwise, continue processing recursively
-				nestedMap, ok := array[index].(map[string]interface{})
-				if !ok {
-					return fmt.Errorf("path segment is not an object: %s[%d]", arrayName, index)
-				}
-				current = nestedMap
-			}
-		} else {
-			nested, ok := current[segment]
-			if !ok {
-				nested = make(map[string]interface{})
-				current[segment] = nested
-			}
-
-			nestedMap, ok := nested.(map[string]interface{})
-			if !ok {
-				return fmt.Errorf("path segment is not an object: %s", segment)
-			}
-			current = nestedMap
-		}
-	}
-
-	return nil
 }
 
 func confirmJobCreation() (bool, error) {

@@ -63,7 +63,7 @@ func run() int {
 		kubeconfig = flag.String("kubeconfig", "", "absolute path to the kubeconfig file")
 	}
 	filename = flag.String("f", "", "(optional) filename to save Job resource")
-	patchFile = flag.String("patch-file", "", "(optional) JSON file with patch information")
+	patchFile = flag.String("patch-file", "", "(optional) JSON file with patch information. Patch file format :Refer to https://kubernetes.io/docs/reference/kubectl/generated/kubectl_patch/")
 	flag.Usage = func() {
 		fmt.Printf(`%[1]s - create custom job from cronjob template
 
@@ -78,10 +78,6 @@ Examples:
     
     # Apply patch from JSON or YAML file without opening an editor
     %[1]s --patch-file=/path/to/patch.json namespace name 
-    
-	# Patch file format :
-	# Refer to https://kubernetes.io/docs/reference/kubectl/generated/kubectl_patch/
-
 
 Options:
 `, cmdName)
@@ -435,7 +431,6 @@ func (e *patchJobEditor) EditJob(job *batchv1.Job) error {
 
 func applyJob(filename string) error {
 	cmd := exec.Command("kubectl", "apply", "-f", filename)
-	cmd.Stdin = nil
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
 	return cmd.Run()

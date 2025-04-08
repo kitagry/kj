@@ -63,7 +63,7 @@ func run() int {
 		kubeconfig = flag.String("kubeconfig", "", "absolute path to the kubeconfig file")
 	}
 	filename = flag.String("f", "", "(optional) filename to save Job resource")
-	patchFile = flag.String("patch-file", "", "(optional) JSON file with patch information. Patch file format :Refer to https://kubernetes.io/docs/reference/kubectl/generated/kubectl_patch/")
+	patchFile = flag.String("patch-file", "", "(optional) JSON file with patch information. The file format is specified in the URL below. https://kubernetes.io/docs/reference/kubectl/generated/kubectl_patch/")
 	flag.Usage = func() {
 		fmt.Printf(`%[1]s - create custom job from cronjob template
 

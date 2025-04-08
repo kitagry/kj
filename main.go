@@ -20,6 +20,8 @@ import (
 	"github.com/mattn/go-tty/ttyutil"
 	batchv1 "k8s.io/api/batch/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/util/strategicpatch"
+	apiyaml "k8s.io/apimachinery/pkg/util/yaml"
 	"k8s.io/apimachinery/pkg/version"
 	"k8s.io/client-go/kubernetes"
 	_ "k8s.io/client-go/plugin/pkg/client/auth"
@@ -41,7 +43,11 @@ func main() {
 }
 
 func run() int {
-	var kubeconfig *string
+	var (
+		kubeconfig *string
+		filename   *string
+		patchFile  *string
+	)
 	// default kubeconfig path is loaded in the following priority:
 	// 1. load environment variable KUBECONFIG exists
 	// 2. load $HOME/.kube/config
@@ -56,7 +62,8 @@ func run() int {
 	} else {
 		kubeconfig = flag.String("kubeconfig", "", "absolute path to the kubeconfig file")
 	}
-	filename := flag.String("f", "", "(optional) filename to save Job resource")
+	filename = flag.String("f", "", "(optional) filename to save Job resource")
+	patchFile = flag.String("patch-file", "", "(optional) JSON file with patch information. The file format is specified in the URL below. https://kubernetes.io/docs/reference/kubectl/generated/kubectl_patch/")
 	flag.Usage = func() {
 		fmt.Printf(`%[1]s - create custom job from cronjob template
 
@@ -64,6 +71,13 @@ Usage:
 	%[1]s namespace name
 	%[1]s namespace/name
 	%[1]s name
+
+Examples:
+    # Edit a job interactively in your editor
+    %[1]s namespace name
+    
+    # Apply patch from JSON or YAML file without opening an editor
+    %[1]s --patch-file=/path/to/patch.json namespace name 
 
 Options:
 `, cmdName)
@@ -98,7 +112,51 @@ Options:
 		return exitStatusErr
 	}
 
-	if err = createJobWithFileName(filename, job); err != nil {
+	var jobFilename string
+	if filename == nil || *filename == "" {
+		f, err := os.CreateTemp("", "kj.*.yaml")
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "%s: failed to create temporary file: %v\n", cmdName, err)
+			return exitStatusErr
+		}
+		jobFilename = f.Name()
+		defer os.Remove(jobFilename)
+	} else {
+		jobFilename = *filename
+	}
+
+	var editor jobEditor
+	// If patchFile is specified, skip interactive editing and apply the patch
+	skipConfirm := false
+	if patchFile != nil && *patchFile != "" {
+		editor = &patchJobEditor{
+			filename:  jobFilename,
+			patchFile: *patchFile,
+		}
+		skipConfirm = true
+	} else {
+		editor = &interactiveJobEditor{
+			filename: jobFilename,
+		}
+	}
+
+	if err := editor.EditJob(job); err != nil {
+		fmt.Fprintf(os.Stderr, "%s: %v\n", cmdName, err)
+		return exitStatusErr
+	}
+
+	if !skipConfirm {
+		confirmed, err := confirmByUser()
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "%s: %v\n", cmdName, err)
+		}
+		if !confirmed {
+			fmt.Println("canceled")
+			return exitStatusOK
+		}
+	}
+
+	if err := applyJob(jobFilename); err != nil {
 		fmt.Fprintf(os.Stderr, "%s: %v\n", cmdName, err)
 		return exitStatusErr
 	}
@@ -224,40 +282,12 @@ func randStr(n int) (string, error) {
 	return builder.String(), nil
 }
 
-func createJobWithFileName(filename *string, job *batchv1.Job) error {
-	var jobFilename string
-	if filename == nil || *filename == "" {
-		tempFile, err := os.CreateTemp("", "kj.*.yaml")
-		if err != nil {
-			return err
-		}
-		jobFilename = tempFile.Name()
-		defer os.Remove(jobFilename)
-	} else {
-		jobFilename = *filename
-	}
-
-	editor := &interactiveJobEditor{
-		filename: jobFilename,
-	}
-
-	if err := editor.EditJob(job); err != nil {
-		return err
-	}
-
-	confirmed, err := confirmJobCreation()
+func confirmByUser() (bool, error) {
+	tty, err := tty.Open()
 	if err != nil {
-		return err
+		return false, err
 	}
-	if !confirmed {
-		fmt.Println("canceled")
-		return nil
-	}
-
-	return applyJob(jobFilename)
-}
-
-func confirmByUser(tty *tty.TTY) (bool, error) {
+	defer tty.Close()
 	fmt.Fprint(tty.Output(), "Do you want to create a job with the change you just made? [y/n]\n")
 
 	sigs := make(chan os.Signal, 1)
@@ -301,11 +331,9 @@ func confirmByUser(tty *tty.TTY) (bool, error) {
 	}
 }
 
-// TODO: feature add patchJobEditor
-//
-//	type jobEditor interface {
-//		EditJob(job *batchv1.Job) error
-//	}
+type jobEditor interface {
+	EditJob(job *batchv1.Job) error
+}
 type interactiveJobEditor struct {
 	filename string
 }
@@ -355,27 +383,56 @@ func writeJobToFile(f *os.File, job *batchv1.Job) error {
 	return f.Close()
 }
 
-func confirmJobCreation() (bool, error) {
-	tty, err := tty.Open()
-	if err != nil {
-		return false, err
-	}
-	defer tty.Close()
-
-	return confirmByUser(tty)
+type patchJobEditor struct {
+	filename  string
+	patchFile string
 }
 
-func applyJob(filename string) error {
-	tty, err := tty.Open()
+func (e *patchJobEditor) EditJob(job *batchv1.Job) error {
+	patchBytes, err := os.ReadFile(e.patchFile)
+	if err != nil {
+		return fmt.Errorf("failed to read patch file: %w", err)
+	}
+
+	origData, err := jobToYaml(job)
 	if err != nil {
 		return err
 	}
-	defer tty.Close()
 
+	origJSON, err := apiyaml.ToJSON(origData)
+	if err != nil {
+		return fmt.Errorf("failed to convert Job to JSON: %w", err)
+	}
+
+	patchJSON, err := apiyaml.ToJSON(patchBytes)
+	if err != nil {
+		return fmt.Errorf("failed to convert patch to JSON: %w\nPatch content: %s", err, string(patchBytes))
+	}
+
+	patchedJSON, err := strategicpatch.StrategicMergePatch(origJSON, patchJSON, job)
+	if err != nil {
+		return fmt.Errorf("failed to apply patch: %w", err)
+	}
+
+	patchedYAML, err := yaml.JSONToYAML(patchedJSON)
+	if err != nil {
+		return fmt.Errorf("failed to convert patched JSON to YAML: %w", err)
+	}
+
+	f, err := os.Create(e.filename)
+	if err != nil {
+		return err
+	}
+	defer f.Close()
+
+	_, err = f.Write(patchedYAML)
+	return err
+}
+
+func applyJob(filename string) error {
 	cmd := exec.Command("kubectl", "apply", "-f", filename)
-	cmd.Stdin = tty.Input()
-	cmd.Stdout = tty.Output()
-	cmd.Stderr = tty.Output()
+	cmd.Stdout = os.Stdout
+	cmd.Stderr = os.Stderr
 	return cmd.Run()
 }
 

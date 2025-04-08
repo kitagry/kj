@@ -1,3 +1,5 @@
+version: 2
+
 builds:
   - goos:
       - windows
@@ -6,11 +8,10 @@ builds:
     goarch:
       - amd64
       - arm64
-      - 386
+      - '386'
 
 archives:
-  - rlcp: true
-    format: tar.gz
+  - format: tar.gz
     format_overrides:
       - goos: windows
         format: zip
@@ -27,9 +28,9 @@ archives:
 
 brews:
   - description: Edit and create Kubernetes job from cronjob template using your EDITOR
-    tap:
+    repository:
       owner: kitagry
       name: homebrew-tap
-    folder: Formula
+    directory: Formula
     homepage: https://github.com/kitagry/kj
     install: bin.install "kj"

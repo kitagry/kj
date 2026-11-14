@@ -136,7 +136,6 @@ func TestJobToYaml(t *testing.T) {
 			expect: []byte(`apiVersion: batch/v1
 kind: Job
 metadata:
-  creationTimestamp: null
   name: test
   namespace: default
   # ownerReferences:
@@ -147,8 +146,7 @@ metadata:
   #   uid: ""
 spec:
   template:
-    metadata:
-      creationTimestamp: null
+    metadata: {}
     spec:
       containers: null
 status: {}
